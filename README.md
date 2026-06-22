@@ -38,6 +38,7 @@
 particleAnalyzer/
 ├── coffee_grind_analysis.py   # 主分析程式 (包含影像處理、分水嶺分割、統計與繪圖)
 ├── generate_test_image.py     # 合成顆粒產生器與分析器準確度驗證工具
+├── coffee_calibration_square_15cm.pdf # A4 標準 15cm x 15cm 校正框 PDF 範本 (可直接列印)
 ├── .gitignore                 # Git 忽略設定 (已排除虛擬環境與測試結果檔)
 └── README.md                  # 本說明文件
 ```
@@ -59,7 +60,7 @@ pip install opencv-python numpy scipy pandas matplotlib
 影像的拍照品質會直接決定分析的準確度，請參考以下建議進行拍攝：
 
 1. **列印正方形校正框**：
-   * 在一張 A4 白紙上列印一個已知邊長的正方形（例如 $15\text{cm} \times 15\text{cm}$，線條建議為黑色、較粗且清晰）。
+   * 本專案已附帶 A4 標準底板 [coffee_calibration_square_15cm.pdf](file:///c:/python_prj/particleAnalyzer/coffee_calibration_square_15cm.pdf)，請直接以 **100% 實際大小（不進行任何縮放）** 列印於 A4 白紙上。列印後的黑色正方形外框邊長即為精確的 $15\text{cm} \times 15\text{cm}$。
 2. **均勻撒粉**：
    * 將咖啡粉「均勻攤平、儘量避免重疊結塊」地散布在正方形框**內部**。
    * 由於白紙背景反差足夠，請勿使用過於雜亂的背景。
