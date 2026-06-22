@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Output directories
+results/
+results2/
+synthetic_results/
+synthetic_results_100/
+
+# Heavy images
+cp.jpg
+cp2.jpg
+synthetic_particles.jpg
+synthetic_particles_100.jpg
