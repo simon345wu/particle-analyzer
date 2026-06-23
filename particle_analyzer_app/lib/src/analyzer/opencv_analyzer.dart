@@ -28,12 +28,18 @@ class AnalysisResult {
   final Map<String, double> statistics;
   final String annotatedImagePath;
   final String binaryMaskPath;
+  final double scalePxPerMm;
+  final String? warpedImagePath;
+  final String? squareDetectionPath;
 
   AnalysisResult({
     required this.particles,
     required this.statistics,
     required this.annotatedImagePath,
     required this.binaryMaskPath,
+    required this.scalePxPerMm,
+    this.warpedImagePath,
+    this.squareDetectionPath,
   });
 }
 
@@ -50,6 +56,10 @@ class OpenCVAnalyzer {
   /// * [minCircularity] 最小圓形度過濾門檻
   /// * [distThresh] 分水嶺演算法距離轉換門檻 (像素)
   /// * [invert] 咖啡粉顏色是否亮於背景
+  /// * [autoCalibrate] 是否自動偵測 $15\text{cm} \times 15\text{cm}$ 校正框進行透視校正
+  /// * [squareMm] 校正框的實際物理邊長 (單位：mm，預設 150)
+  /// * [targetResolution] 透視校正後的解析度 (像素/mm，預設 10)
+  /// * [marginMm] 內縮裁切邊界 (mm，預設 2)
   static AnalysisResult runPipeline({
     required String imagePath,
     required String outDir,
@@ -59,6 +69,10 @@ class OpenCVAnalyzer {
     required double minCircularity,
     required double distThresh,
     bool invert = false,
+    bool autoCalibrate = false,
+    double squareMm = 150.0,
+    double targetResolution = 10.0,
+    double marginMm = 5.0,
   }) {
     // 1. 讀取影像
     final img = cv.imread(imagePath);
@@ -66,9 +80,59 @@ class OpenCVAnalyzer {
       throw Exception("無法讀取圖片: $imagePath");
     }
 
+    double finalScale = scalePxPerMm;
+    cv.Mat activeImage = img;
+    String? warpedPath;
+    String? detectionPath;
+
+    if (autoCalibrate) {
+      final corners = _findSquareCorners(img);
+      if (corners == null) {
+        img.dispose();
+        throw Exception("無法偵測到 ${squareMm.toStringAsFixed(0)}mm 校正框，請確認四角完整入鏡，或切換至手動模式");
+      }
+
+      // 繪製校正框標記圖
+      final overlay = _drawSquareOverlay(img, corners);
+      detectionPath = "$outDir/square_detection.jpg";
+      cv.imwrite(detectionPath, overlay);
+      overlay.dispose();
+
+      // 透視校正並攤平影像
+      final sizePx = (squareMm * targetResolution).round();
+      final srcCorners = corners;
+      final dstCorners = cv.VecPoint.fromList([
+        cv.Point(0, 0),
+        cv.Point(sizePx - 1, 0),
+        cv.Point(sizePx - 1, sizePx - 1),
+        cv.Point(0, sizePx - 1),
+      ]);
+
+      final M = cv.getPerspectiveTransform(srcCorners, dstCorners);
+      final warped = cv.warpPerspective(img, M, (sizePx, sizePx));
+      warpedPath = "$outDir/warped.jpg";
+      cv.imwrite(warpedPath, warped);
+
+      // 內縮邊界裁剪，避免框線本身被誤判為顆粒
+      final marginPx = (marginMm * targetResolution).round();
+      final h = warped.rows;
+      final w = warped.cols;
+      final cropMargin = math.max(0, math.min(marginPx, math.min(h ~/ 4, w ~/ 4)));
+      final cropped = cv.Mat.fromMat(warped, roi: cv.Rect(cropMargin, cropMargin, w - 2 * cropMargin, h - 2 * cropMargin));
+      activeImage = cropped.clone();
+      finalScale = targetResolution;
+
+      // 釋放中間臨時 Mat
+      corners.dispose();
+      dstCorners.dispose();
+      M.dispose();
+      cropped.dispose();
+      warped.dispose();
+    }
+
     // 2. 前處理：灰階化與高斯模糊
-    final gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY);
-    final blurred = cv.GaussianBlur(gray, (5, 5), 0);
+    final gray = cv.cvtColor(activeImage, cv.COLOR_BGR2GRAY);
+    final blurred = cv.gaussianBlur(gray, (5, 5), 0);
 
     // 3. 自動大津二值化 (Otsu Threshold)
     final threshType = invert ? cv.THRESH_BINARY : cv.THRESH_BINARY_INV;
@@ -85,14 +149,15 @@ class OpenCVAnalyzer {
     final closed = cv.morphologyEx(opened, cv.MORPH_CLOSE, kernel);
 
     // 5. 分水嶺分割 (Watershed Segmentation)
-    final dist = cv.distanceTransform(closed, cv.DIST_L2, 5);
+    final (dist, _) = cv.distanceTransform(closed, cv.DIST_L2, 5, cv.DIST_LABEL_CCOMP);
     
     // 尋找局部極大值作為前景種子點
     final (_, sureFg) = cv.threshold(dist, distThresh, 255, cv.THRESH_BINARY);
     final sureFgUint8 = sureFg.convertTo(cv.MatType.CV_8UC1);
     
     // 連通元件標籤
-    final (markers, _) = cv.connectedComponents(sureFgUint8);
+    final markers = cv.Mat.empty();
+    cv.connectedComponents(sureFgUint8, markers, 8, cv.MatType.CV_32S, cv.CCL_DEFAULT);
     
     // 將標記轉為 32-bit signed 以符合分水嶺函數要求
     final markers32S = markers.convertTo(cv.MatType.CV_32SC1);
@@ -101,18 +166,16 @@ class OpenCVAnalyzer {
 
     // 6. 提取與過濾顆粒資訊
     final List<ParticleRecord> particles = [];
-    final int h = img.rows;
-    final int intW = img.cols;
+    final int h = activeImage.rows;
+    final int intW = activeImage.cols;
     
     // 尋找各個獨立分水嶺標籤的輪廓與屬性
-    // 在這裡我們簡化邏輯：透過輪廓偵測或標籤遍歷獲取各顆粒的特徵
-    // 我們直接使用 opencv_dart 尋找 closed 的輪廓作為基本顆粒代表
     final (contours, _) = cv.findContours(closed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
     
     int particleId = 2; // 起始標籤編號 (0是未知, 1是背景)
     
     for (int i = 0; i < contours.length; i++) {
-      final cnt = contours.at(i);
+      final cnt = contours.elementAt(i);
       final areaPx = cv.contourArea(cnt);
       final perimeterPx = cv.arcLength(cnt, true);
       
@@ -123,7 +186,7 @@ class OpenCVAnalyzer {
       
       // 計算等效圓直徑 (ECD)
       final equivDiameterPx = math.sqrt((4 * areaPx) / math.pi);
-      final equivDiameterUm = (equivDiameterPx / scalePxPerMm) * 1000.0;
+      final equivDiameterUm = (equivDiameterPx / finalScale) * 1000.0;
       
       // 計算外接矩形以過濾邊界切半顆粒
       final rect = cv.boundingRect(cnt);
@@ -139,7 +202,7 @@ class OpenCVAnalyzer {
           !touchesBorder) {
         
         // 利用 Moment 計算重心
-        final moments = cv.moments(cnt);
+        final moments = cv.moments(cv.Mat.fromVec(cnt));
         final double cx = moments.m10 / moments.m00;
         final double cy = moments.m01 / moments.m00;
         
@@ -227,7 +290,7 @@ class OpenCVAnalyzer {
     final String maskPath = "$outDir/binary_mask.jpg";
     
     // 繪製輪廓標註 (在原圖上畫框)
-    final annotatedImg = img.clone();
+    final annotatedImg = activeImage.clone();
     for (int i = 0; i < contours.length; i++) {
       cv.drawContours(annotatedImg, contours, i, cv.Scalar(0, 255, 0, 0), thickness: 1);
     }
@@ -236,6 +299,9 @@ class OpenCVAnalyzer {
     cv.imwrite(maskPath, closed);
 
     // 釋放 C++ 底層 Mat 記憶體，防止 Mobile 記憶體洩漏
+    if (autoCalibrate) {
+      activeImage.dispose();
+    }
     img.dispose();
     gray.dispose();
     blurred.dispose();
@@ -255,6 +321,156 @@ class OpenCVAnalyzer {
       statistics: statistics,
       annotatedImagePath: annotatedPath,
       binaryMaskPath: maskPath,
+      scalePxPerMm: finalScale,
+      warpedImagePath: warpedPath,
+      squareDetectionPath: detectionPath,
     );
+  }
+
+  static double _dist(cv.Point p1, cv.Point p2) {
+    final dx = p1.x - p2.x;
+    final dy = p1.y - p2.y;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
+  static List<cv.Point> _orderCorners(List<cv.Point> pts) {
+    assert(pts.length == 4);
+    cv.Point tl = pts[0];
+    cv.Point br = pts[0];
+    double minSum = (pts[0].x + pts[0].y).toDouble();
+    double maxSum = (pts[0].x + pts[0].y).toDouble();
+
+    cv.Point tr = pts[0];
+    cv.Point bl = pts[0];
+    double minDiff = (pts[0].y - pts[0].x).toDouble();
+    double maxDiff = (pts[0].y - pts[0].x).toDouble();
+
+    for (int i = 1; i < 4; i++) {
+      final p = pts[i];
+      final sum = (p.x + p.y).toDouble();
+      final diff = (p.y - p.x).toDouble();
+
+      if (sum < minSum) {
+        minSum = sum;
+        tl = p;
+      }
+      if (sum > maxSum) {
+        maxSum = sum;
+        br = p;
+      }
+      if (diff < minDiff) {
+        minDiff = diff;
+        tr = p;
+      }
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        bl = p;
+      }
+    }
+    return [tl, tr, br, bl];
+  }
+
+  static cv.VecPoint? _findSquareCorners(
+    cv.Mat image, {
+    double minAreaRatio = 0.10,
+    double maxAreaRatio = 0.97,
+    double sideRatioTolerance = 1.35,
+  }) {
+    final gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY);
+    final blurred = cv.gaussianBlur(gray, (5, 5), 0);
+    final edges = cv.canny(blurred, 30, 100);
+
+    final dilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5));
+    final edgesDilated = cv.dilate(edges, dilateKernel, iterations: 2);
+    final erodeKernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 3));
+    final edgesProcessed = cv.erode(edgesDilated, erodeKernel, iterations: 1);
+
+    final (contours, _) = cv.findContours(edgesProcessed, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    final double imgArea = (image.rows * image.cols).toDouble();
+
+    double maxArea = -1;
+    List<cv.Point>? bestOrdered;
+
+    for (int i = 0; i < contours.length; i++) {
+      final cnt = contours.elementAt(i);
+      final area = cv.contourArea(cnt);
+      if (area < imgArea * minAreaRatio || area > imgArea * maxAreaRatio) {
+        continue;
+      }
+      final peri = cv.arcLength(cnt, true);
+      final approx = cv.approxPolyDP(cnt, 0.02 * peri, true);
+      if (approx.length != 4 || !cv.isContourConvex(approx)) {
+        approx.dispose();
+        continue;
+      }
+
+      final ptsList = [
+        approx.elementAt(0),
+        approx.elementAt(1),
+        approx.elementAt(2),
+        approx.elementAt(3),
+      ];
+      final ordered = _orderCorners(ptsList);
+
+      final double s0 = _dist(ordered[0], ordered[1]);
+      final double s1 = _dist(ordered[1], ordered[2]);
+      final double s2 = _dist(ordered[2], ordered[3]);
+      final double s3 = _dist(ordered[3], ordered[0]);
+
+      final minSide = [s0, s1, s2, s3].reduce(math.min);
+      final maxSide = [s0, s1, s2, s3].reduce(math.max);
+
+      if (minSide == 0 || maxSide / minSide > sideRatioTolerance) {
+        approx.dispose();
+        continue;
+      }
+
+      if (area > maxArea) {
+        maxArea = area;
+        bestOrdered = ordered;
+      }
+      approx.dispose();
+    }
+
+    gray.dispose();
+    blurred.dispose();
+    edges.dispose();
+    dilateKernel.dispose();
+    edgesDilated.dispose();
+    erodeKernel.dispose();
+    edgesProcessed.dispose();
+    contours.dispose();
+
+    if (bestOrdered != null) {
+      return cv.VecPoint.fromList(bestOrdered);
+    }
+    return null;
+  }
+
+  static cv.Mat _drawSquareOverlay(cv.Mat image, cv.VecPoint corners) {
+    final out = image.clone();
+    final ptsVecVec = cv.VecVecPoint.fromList([[
+      corners.elementAt(0),
+      corners.elementAt(1),
+      corners.elementAt(2),
+      corners.elementAt(3),
+    ]]);
+    cv.drawContours(out, ptsVecVec, 0, cv.Scalar(0, 0, 255, 0), thickness: 4);
+    ptsVecVec.dispose();
+
+    for (int i = 0; i < 4; i++) {
+      final p = corners.elementAt(i);
+      cv.circle(out, p, 10, cv.Scalar(0, 255, 255, 0), thickness: -1);
+      cv.putText(
+        out,
+        i.toString(),
+        cv.Point(p.x + 15, p.y),
+        cv.FONT_HERSHEY_SIMPLEX,
+        1.0,
+        cv.Scalar(0, 255, 255, 0),
+        thickness: 2,
+      );
+    }
+    return out;
   }
 }

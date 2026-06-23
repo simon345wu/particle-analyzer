@@ -1,30 +1,39 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:particle_analyzer_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Dashboard basic UI test', (WidgetTester tester) async {
+    // Set a larger desktop screen size to prevent layout overflows.
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Build our app under ProviderScope and trigger a frame.
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MyApp(),
+      ),
+    );
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Verify that the application title is present.
+    expect(find.text('咖啡粉顆粒大小分析器'), findsAtLeastNWidgets(1));
+    expect(find.text('參數即時調校控制台'), findsOneWidget);
+    expect(find.text('載入合成測試影像'), findsOneWidget);
+    expect(find.text('從相簿選擇'), findsOneWidget);
+    expect(find.text('開啟相機'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Tap the language toggle button ("EN")
+    await tester.tap(find.text('EN'));
+    await tester.pumpAndSettle();
+
+    // Verify UI has changed to English
+    expect(find.text('Coffee Particle Analyzer'), findsAtLeastNWidgets(1));
+    expect(find.text('Real-time Controls'), findsOneWidget);
+    expect(find.text('Load Test Image'), findsOneWidget);
+    expect(find.text('Gallery'), findsOneWidget);
+    expect(find.text('Camera'), findsOneWidget);
   });
 }

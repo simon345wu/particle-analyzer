@@ -1,16 +1,106 @@
-# particle_analyzer_app
+# 咖啡粉粒徑分析行動與桌面應用程式 (Coffee Grind Particle Analyzer App)
 
-A new Flutter project.
+本目錄包含咖啡粉粒徑分析專案的 Flutter 跨平台應用程式（Mobile & Desktop）。本軟體透過 `OpenCV` C++ 底層綁定進行即時影像分析，並提供高度客製化的互動式控制台與視覺化粒徑分佈圖表。
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 📱 核心功能規格
 
-A few resources to get you started if this is your first Flutter project:
+### 1. 響應式介面設計 (Responsive Layout)
+程式會根據執行設備的螢幕寬度（寬度門檻 $700\text{px}$）自動切換版面配置：
+* **桌面模式 (Desktop)**：雙欄配置。左側大區塊顯示分析結果影像/圖表，並於左下方展示完整的統計摘要資訊；右側為參數調校控制面板。
+* **行動模式 (Mobile)**：單欄垂直滾動配置。頂部固定高度展示分析結果影像/圖表，中段為統計摘要資訊，底部整合參數調校面板，防止小螢幕版面溢出或裁切。
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### 2. 即時調參控制台 (Sidebar GUI Controls)
+面板提供滑桿與開關，調整參數時會自動重啟背景分析管線並即時重繪圖表：
+* **自動校正框模式開關**：切換自動尋找 $15\text{cm} \times 15\text{cm}$ 正方形校正框，或採用手動比例尺模式。
+* **比例尺調節**（手動模式）：調整比例尺大小（`5.0` 至 `100.0 px/mm`）。
+* **物理邊長調節**（自動校正模式）：設定實際校正框寬度（`50.0` 至 `300.0 mm`）。
+* **最小粒徑過濾**：排除極小背景噪聲（`5` 至 `100 μm`）。
+* **最大粒徑過濾**：排除未分離好的大粉團（`500` 至 `3000 μm`）。
+* **最小圓形度過濾**：剔除不規則的黏連噪訊或雜質（`0.10` 至 `1.00`）。
+* **分水嶺種子門檻值**：控制顆粒核心分割的敏感度（`0.10` 至 `2.00`）。
+* **顏色反轉開關**：支援暗色底、明亮顆粒照片（如黑紙灑白粉）。
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### 3. 多檢視切換分頁 (View Switching Tabs)
+使用者可點選分頁晶片（`ChoiceChips`）無縫切換多種分析視圖：
+1. **數量分佈**：顯示依顆粒數量比例計算的粒徑分佈直方圖。
+2. **體積分佈**：將顆粒模擬為三維球體後，顯示體積佔比的粒徑分佈直方圖。
+3. **校正框偵測**（僅在自動校正開啟且定位成功時顯示）：展示標示紅線定位框的影像。
+4. **顆粒標註**：展示原圖標註綠色顆粒外框的偵測結果影像。
+5. **二值化遮罩**：展示用於檢查噪訊與二值化精準度的黑白遮罩圖。
+
+### 4. 統計摘要面板 (Statistics Summary)
+即時計算並列出以下高精度指標：
+* 總檢出數量 (Count)
+* 平均直徑 (Mean)
+* 中位直徑 (Median)
+* 標準差 (Std Dev)
+* 數量分布指標：`Dn10`、`Dn50`、`Dn90`
+* 體積分布指標：`Dv10`、`Dv50`、`Dv90`
+
+---
+
+## 📊 圖表視覺規格 (Mockup Specification)
+
+圖表採用 `fl_chart` 的 `BarChart` 進行深度客製化，以完全符合專業報告之規格：
+
+* **背景與框架**：
+  * 使用純白背景面板（`Colors.white`），並在外圍套用實心黑色細框（`Border.all`），呈現紙質報告質感。
+  * 隱藏頂部與右側多餘刻度，僅保留左側 Y 軸與底部 X 軸。
+  * 水平格線採用微灰色實線（`Colors.grey.shade300`），並停用垂直格線以保持乾淨。
+* **動態中心標題**：
+  * 正上方標示黑色加粗標題：`咖啡粉粒徑分佈 (n=xxxx)`，其中 `n` 為動態計算出的總顆粒數。
+* **分佈柱狀圖**：
+  * 直方圖切分為 `35` 個均等區間（High-Fidelity bins），提供高解析度粒徑分布趨勢。
+  * 柱狀圖顏色使用咖啡色（`Color(0xFF6F4E37)`），形狀改為直角矩形（`BorderRadius.zero`）。
+  * 寬度在桌機模式下為 `10px`，手機模式下自動調整為 `4px` 以保證響應式空間。
+* **百分位數虛線指示線（D10/D50/D90）**：
+  * 依據直方圖的區間寬度與起始粒徑，精確算出 D10、D50、D90 於圖表坐標系中的 X 軸位置。
+  * 繪製藍色（D10）、綠色（D50）、紅色（D90）的三條虛線（`dashArray: [4, 4]`），縱向貫穿圖表。
+* **右上角浮動圖例盒**：
+  * 在圖表右上角以 `Positioned` 方式疊加圖例容器，底色為帶透明之純白（`Colors.white.withValues(alpha: 0.9)`）。
+  * 以 Row/Container 手動繪製對應顏色的三個小虛線線段（由 3 個 `1.5px` 高、`5px` 寬之小方塊組成）。
+  * 指標名稱與數值寫死格式，顯示如：
+    * `D10 = 276 um`
+    * `D50 (中位數) = 618 um`
+    * `D90 = 1238 um`
+* **X 軸與 Y 軸標籤與標題**：
+  * **X 軸標題**：`等效顆粒直徑 (μm)`
+  * **Y 軸標題**：`顆粒數量`（數量分佈）或 `體積比例 (%)`（體積分佈）
+  * **X 軸刻度**：程式會尋找落在各個 Bin 區間的 `250, 500, 750, 1000, 1250, 1500, 1750, 2000` 數值，並僅在對應 Bin 的中心下方印出該整數刻度標籤，實現極簡且整齊的等距軸線刻度。
+* **互動提示框 (Touch Tooltip)**：
+  * 點擊/懸停柱子時，彈出深灰色半透明 Tooltip，詳細展示該區間的徑度範圍（如 `250-300 μm`）以及對應的數值/佔比。
+
+---
+
+## 🛠️ 開發架構與技術棧
+
+* **前端框架**：Flutter (SDK ^3.9.2, Dart 3)
+* **底層核心**：`opencv_dart` (^1.1.2) - 透過 Dart FFI 與 C++ 編譯之 OpenCV 動態連結庫（如 `dartcv.dll`/`libdartcv.so`）進行高效率互操作。
+* **狀態管理**：`flutter_riverpod` (^2.5.1) - 管理全域調參 state 並實現 UI 自動重繪。
+* **圖表繪製**：`fl_chart` (^0.68.0) - 高性能向量圖表繪製。
+* **本機快取與相機**：`path_provider`、`image_picker`、`camera` 整合行動端硬體操作。
+
+---
+
+## 🏁 啟動與測試
+
+### 1. 執行靜態分析
+於 `particle_analyzer_app` 目錄下執行：
+```bash
+flutter analyze
+```
+*驗證結果：無任何 Issue/Error/Warning。*
+
+### 2. 執行單元與 UI 測試
+```bash
+flutter test test/widget_test.dart
+```
+*驗證結果：主畫面與控制台元件完整載入，無 Viewport 溢出或空值異常，測試全部通過。*
+
+### 3. 開發環境運行
+```bash
+flutter run -d <your-device-id>
+```
+點選主介面的「載入合成測試影像」即可快速生成虛擬顆粒並檢查完整的統計與直方圖。
