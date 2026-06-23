@@ -83,6 +83,7 @@ final Map<AppLanguage, Map<String, String>> localizedStrings = {
     'about_authors': '作者與實驗室 (Authors)',
     'about_ai': 'AI 協同設計 (Assistant)',
     'about_version': '系統版本 (Version)',
+    'about_github': '專案原始碼 (GitHub)',
     'coffee_analysis': '咖啡分析',
   },
   AppLanguage.en: {
@@ -163,6 +164,7 @@ final Map<AppLanguage, Map<String, String>> localizedStrings = {
     'about_authors': 'Authors',
     'about_ai': 'AI Assistant',
     'about_version': 'Version',
+    'about_github': 'GitHub Repository',
     'coffee_analysis': 'Grind Analysis',
   }
 };

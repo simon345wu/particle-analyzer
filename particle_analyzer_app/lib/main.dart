@@ -10,6 +10,7 @@ import 'src/analyzer/opencv_analyzer.dart';
 import 'src/models/profile_model.dart';
 import 'src/services/profile_manager.dart';
 import 'src/localization/translations.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(
@@ -1150,6 +1151,18 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       label: _tr('about_version'),
                       value: "v1.0.0",
                     ),
+                    const Divider(height: 24, color: Colors.grey),
+                    _aboutRow(
+                      icon: Icons.code,
+                      label: _tr('about_github'),
+                      value: "github.com/simon345wu/particle-analyzer",
+                      onTap: () async {
+                        final uri = Uri.parse("https://github.com/simon345wu/particle-analyzer");
+                        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+                          debugPrint("Could not launch $uri");
+                        }
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -1175,6 +1188,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     required IconData icon,
     required String label,
     required String value,
+    VoidCallback? onTap,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1193,12 +1207,16 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              GestureDetector(
+                onTap: onTap,
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: onTap != null ? Colors.blue.shade300 : Colors.white,
+                    decoration: onTap != null ? TextDecoration.underline : null,
+                  ),
                 ),
               ),
             ],
